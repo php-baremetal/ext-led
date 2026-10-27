@@ -32,7 +32,7 @@ with the ground shared with the board. Change the pin and `PIXELS` to match your
   },
   "extra": {
     "baremetal": {
-      "sdk": "esp32@^1.0",
+      "sdk": "esp32@^2.0",
       "board": "espressif-esp32-s3-devkitc-1-n8r8",
       "runtime": "init-loop",
       "storage": "embedded"

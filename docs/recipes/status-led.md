@@ -32,7 +32,7 @@ data pin (some ESP32-S3 boards use GPIO 38) and the order.
   },
   "extra": {
     "baremetal": {
-      "sdk": "esp32@^1.0",
+      "sdk": "esp32@^2.0",
       "board": "waveshare-esp32-s3-zero-n8r8",
       "runtime": "init-loop",
       "storage": "embedded"
