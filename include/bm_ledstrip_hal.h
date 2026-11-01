@@ -24,6 +24,7 @@ enum { BM_LED_MODEL_WS2812, BM_LED_MODEL_SK6812 };
 typedef struct bm_ledstrip bm_ledstrip_t;
 bm_ledstrip_t *bm_ledstrip_new(int pin, uint32_t count, int model, int order);   /* NULL on failure */
 void bm_ledstrip_del(bm_ledstrip_t *s);
+/* The int functions return 0 on success. */
 int  bm_ledstrip_set_pixel(bm_ledstrip_t *s, uint32_t i, uint8_t r, uint8_t g, uint8_t b);
 int  bm_ledstrip_set_pixel_rgbw(bm_ledstrip_t *s, uint32_t i, uint8_t r, uint8_t g, uint8_t b, uint8_t w);
 int  bm_ledstrip_refresh(bm_ledstrip_t *s);

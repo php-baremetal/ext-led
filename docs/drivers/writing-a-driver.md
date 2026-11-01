@@ -126,9 +126,9 @@ has no constructor that creates a strip, and every method throws `Led\Device is 
 | Field | Meaning |
 | --- | --- |
 | `name` | Registry name, used in the constructor error `cannot init NAME on GPIO N`. |
-| `php_class` | Short class name; the class is `Baremetal\Led\Driver\<php_class>`. Must be unique among installed drivers; the full name must fit in 95 characters. |
+| `php_class` | Short class name; the class is `Baremetal\Led\Driver\<php_class>`. Must be unique among installed drivers. |
 | `model` | `BM_LED_MODEL_WS2812` or `BM_LED_MODEL_SK6812` (from `bm_ledstrip_hal.h`): the timing the HAL uses. |
-| `channels` | `3` (RGB) or `4` (RGBW). With 4, the class also gets `GRBW` and `RGBW`, and the shared methods write pixels as RGBW with W at 0. |
+| `channels` | `3` (RGB) or `4` (RGBW). With 4, the class also gets `GRBW` and `RGBW`. The order passed to the constructor sets the bytes per pixel: with `GRBW` or `RGBW` the shared methods write pixels as RGBW with W at 0. |
 | `default_order` | `LED_ORDER_GRB`, `LED_ORDER_RGB`, `LED_ORDER_GRBW` or `LED_ORDER_RGBW`, used when `$order` is `null`. A 4-channel driver needs a 4-channel default. |
 | `methods` | The class's method table (`zend_function_entry[]`), at least `__construct`. |
 
@@ -138,10 +138,10 @@ From `php_led.h` and `bm_ledstrip_hal.h`:
 
 | Function | Does |
 | --- | --- |
-| `led_ctor(INTERNAL_FUNCTION_PARAM_PASSTHRU, &desc)` | The shared constructor: `(int $pin, int $count = 1, ?int $order = null)`, validates, creates and clears the strip, binds it to the object. |
-| `led_object_from(Z_OBJ_P(ZEND_THIS))` | The object behind `$this`: `strip` (NULL before the constructor), `count`, `channels`. |
+| `led_ctor(INTERNAL_FUNCTION_PARAM_PASSTHRU, &desc)` | The shared constructor: `(int $pin, int $count = 1, ?int $order = null)`, validates, refuses a pin another strip drives, creates and clears the strip (not while serving an HTTP request), binds it to the object. |
+| `led_object_from(Z_OBJ_P(ZEND_THIS))` | The object behind `$this`: `strip` (NULL before the constructor), `count`, `channels` (from the order), `pin`. |
 | `bm_ledstrip_set_pixel(s, i, r, g, b)`, `bm_ledstrip_set_pixel_rgbw(s, i, r, g, b, w)` | Write one pixel into the buffer. Return 0 on success. |
-| `bm_ledstrip_refresh(s)`, `bm_ledstrip_clear(s)` | Send the buffer; clear it and send. |
+| `bm_ledstrip_refresh(s)`, `bm_ledstrip_clear(s)` | Send the buffer; clear it and send. 0 on success. |
 
 All run on the PHP task.
 

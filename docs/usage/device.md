@@ -35,12 +35,17 @@ Byte order on the wire, one of the class constants. `null` uses the chip's defau
 <!-- @endparam -->
 <!-- @endparams -->
 
-The constructor creates the strip, then clears it: every pixel is sent as off. Throws `\ValueError` for a
+The constructor creates the strip, then clears it: every pixel is sent as off. While serving an HTTP request
+(`web-server` runtime) it does not clear it, so the LEDs keep what the previous request showed; the buffer
+starts at off either way. Throws `\ValueError` for a
 negative `$pin` (`must be a valid GPIO`), a `$count` below 1 (`must be at least 1`) or an `$order` that is not
 one of the class's constants, and `\Exception` `cannot init ws2812 on GPIO N` (`sk6812` for `Sk6812`) when the
-HAL cannot create the strip (pin not usable, no free transmit channel, no memory).
+HAL cannot create the strip (pin not usable, no free transmit channel, no memory) or another object already
+drives the pin (`cannot init ws2812: GPIO N is already used by another LED strip`). To replace a strip, set the
+old variable to `null` first: in `$led = new Ws2812(8, 16)` the new object is built before the old `$led` is
+released. A strip object cannot be cloned.
 
-`Baremetal\Led\Device` itself has no constructor that creates a strip: always construct a chip class.
+`Baremetal\Led\Device` is abstract: always construct a chip class.
 
 ## Colour order constants
 
@@ -52,12 +57,8 @@ HAL cannot create the strip (pin not usable, no free transmit channel, no memory
 | `RGBW` | `3` | red, green, blue, white | `Sk6812` |
 
 Standard WS2812 strips are `GRB`; some on-board LEDs (the one on the Waveshare ESP32-S3-Zero, for example) are
-WS2812s in `RGB` order. Standard SK6812 RGBW strips are `GRBW`.
-
-<!-- @callout variant="warning" title="Sk6812 needs a four-channel order" -->
-`Sk6812` accepts `GRB` and `RGB`, but ext-led writes SK6812 pixels as RGBW, which needs a four-byte layout. Pass
-`Sk6812::GRBW` or `Sk6812::RGBW` (or nothing), not a three-channel order.
-<!-- @endcallout -->
+WS2812s in `RGB` order. Standard SK6812 RGBW strips are `GRBW`; SK6812 chips without a white LED take `GRB` or
+`RGB`. The order sets the bytes per pixel: three for `GRB` and `RGB`, four for `GRBW` and `RGBW`.
 
 ## Buffer methods
 

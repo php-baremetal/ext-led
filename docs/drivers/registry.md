@@ -51,7 +51,7 @@ A chip package registers into it by naming its descriptor symbol:
 - **PHP uses the class**
 
   `new Ws2812($pin, $count)` creates the strip with the descriptor's LED model, channel count and default
-  order, then clears it.
+  order, then clears it (not while serving an HTTP request).
 <!-- @endsteps -->
 
 So a project gets a chip class just by requiring the chip package. Classes of chips that are not installed do

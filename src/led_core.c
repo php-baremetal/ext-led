@@ -17,11 +17,52 @@
  * (Baremetal\Led\Driver\*) extend this and add only their __construct, which binds a descriptor.
  */
 #include "php_led.h"
+#include "SAPI.h"
 #include "zend_exceptions.h"
+
+#define LED_MAX_STRIPS 16
 
 zend_class_entry *led_device_ce;
 static zend_class_entry *led_cap_ce;          /* Baremetal\Output\Led */
 static zend_object_handlers led_handlers;
+/* The live strips, to refuse a second strip on a GPIO (two RMT channels would fight over the pin). */
+static led_object *s_strips[LED_MAX_STRIPS];
+
+static led_object *led_strip_on(int pin)
+{
+    for (int i = 0; i < LED_MAX_STRIPS; i++) {
+        if (s_strips[i] && s_strips[i]->pin == pin) {
+            return s_strips[i];
+        }
+    }
+    return NULL;
+}
+
+static void led_strip_forget(led_object *o)
+{
+    for (int i = 0; i < LED_MAX_STRIPS; i++) {
+        if (s_strips[i] == o) {
+            s_strips[i] = NULL;
+        }
+    }
+    if (o->strip) {
+        bm_ledstrip_del(o->strip);
+        o->strip = NULL;
+    }
+    o->pin = -1;
+    o->count = 0;
+}
+
+static bool led_strip_remember(led_object *o)
+{
+    for (int i = 0; i < LED_MAX_STRIPS; i++) {
+        if (!s_strips[i]) {
+            s_strips[i] = o;
+            return true;
+        }
+    }
+    return false;
+}
 
 zend_object *led_object_create(zend_class_entry *ce)
 {
@@ -32,16 +73,13 @@ zend_object *led_object_create(zend_class_entry *ce)
     o->strip = NULL;
     o->count = 0;
     o->channels = 3;
+    o->pin = -1;
     return &o->std;
 }
 
 static void led_object_free(zend_object *obj)
 {
-    led_object *o = led_object_from(obj);
-    if (o->strip) {
-        bm_ledstrip_del(o->strip);   /* release the strip */
-        o->strip = NULL;
-    }
+    led_strip_forget(led_object_from(obj));   /* release the strip and its GPIO */
     zend_object_std_dtor(obj);
 }
 
@@ -89,13 +127,28 @@ static void hsv2rgb(zend_long h, zend_long s, zend_long v, uint8_t *r, uint8_t *
     *b = (uint8_t) bb;
 }
 
-/* Write one pixel into the strip buffer (does not flush). A 4-channel strip keeps W at 0. */
-static int led_put(led_object *o, uint32_t i, uint8_t r, uint8_t g, uint8_t b)
+/* Write one pixel into the strip buffer (does not flush). A 4-channel strip keeps W at 0. false (with an
+ * exception) when the HAL refuses it. */
+static bool led_put(led_object *o, uint32_t i, uint8_t r, uint8_t g, uint8_t b)
 {
-    if (o->channels == 4) {
-        return bm_ledstrip_set_pixel_rgbw(o->strip, i, r, g, b, 0);
+    int err = o->channels == 4 ? bm_ledstrip_set_pixel_rgbw(o->strip, i, r, g, b, 0)
+                               : bm_ledstrip_set_pixel(o->strip, i, r, g, b);
+    if (err != 0) {
+        zend_throw_exception_ex(zend_ce_exception, 0, "LED write failed on GPIO %d (error %d)", o->pin, err);
+        return false;
     }
-    return bm_ledstrip_set_pixel(o->strip, i, r, g, b);
+    return true;
+}
+
+/* Flush the buffer to the wire (clear: all pixels to 0 first). false (with an exception) on failure. */
+static bool led_flush(led_object *o, bool clear)
+{
+    int err = clear ? bm_ledstrip_clear(o->strip) : bm_ledstrip_refresh(o->strip);
+    if (err != 0) {
+        zend_throw_exception_ex(zend_ce_exception, 0, "LED refresh failed on GPIO %d (error %d)", o->pin, err);
+        return false;
+    }
+    return true;
 }
 
 ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_led_pixel, 0, 4, IS_VOID, 0)
@@ -150,7 +203,9 @@ PHP_METHOD(LedDevice, pixel)
         zend_argument_value_error(1, "is out of range for this strip");
         RETURN_THROWS();
     }
-    led_put(o, (uint32_t) i, clamp8(r), clamp8(g), clamp8(b));
+    if (!led_put(o, (uint32_t) i, clamp8(r), clamp8(g), clamp8(b))) {
+        RETURN_THROWS();
+    }
 }
 
 PHP_METHOD(LedDevice, fill)
@@ -166,7 +221,9 @@ PHP_METHOD(LedDevice, fill)
         RETURN_THROWS();
     }
     for (uint32_t i = 0; i < o->count; i++) {
-        led_put(o, i, clamp8(r), clamp8(g), clamp8(b));
+        if (!led_put(o, i, clamp8(r), clamp8(g), clamp8(b))) {
+            RETURN_THROWS();
+        }
     }
 }
 
@@ -189,7 +246,9 @@ PHP_METHOD(LedDevice, hsv)
     }
     uint8_t r, g, b;
     hsv2rgb(h, s, v, &r, &g, &b);
-    led_put(o, (uint32_t) i, r, g, b);
+    if (!led_put(o, (uint32_t) i, r, g, b)) {
+        RETURN_THROWS();
+    }
 }
 
 PHP_METHOD(LedDevice, set)
@@ -205,9 +264,13 @@ PHP_METHOD(LedDevice, set)
         RETURN_THROWS();
     }
     for (uint32_t i = 0; i < o->count; i++) {
-        led_put(o, i, clamp8(r), clamp8(g), clamp8(b));
+        if (!led_put(o, i, clamp8(r), clamp8(g), clamp8(b))) {
+            RETURN_THROWS();
+        }
     }
-    bm_ledstrip_refresh(o->strip);
+    if (!led_flush(o, false)) {
+        RETURN_THROWS();
+    }
 }
 
 PHP_METHOD(LedDevice, show)
@@ -217,7 +280,9 @@ PHP_METHOD(LedDevice, show)
     if (!o) {
         RETURN_THROWS();
     }
-    bm_ledstrip_refresh(o->strip);
+    if (!led_flush(o, false)) {
+        RETURN_THROWS();
+    }
 }
 
 PHP_METHOD(LedDevice, off)
@@ -227,7 +292,9 @@ PHP_METHOD(LedDevice, off)
     if (!o) {
         RETURN_THROWS();
     }
-    bm_ledstrip_clear(o->strip);   /* all pixels to 0 and flush */
+    if (!led_flush(o, true)) {   /* all pixels to 0 and flush */
+        RETURN_THROWS();
+    }
 }
 
 PHP_METHOD(LedDevice, count)
@@ -260,6 +327,7 @@ void led_device_class_register(void)
     zend_class_entry ce;
     INIT_NS_CLASS_ENTRY(ce, "Baremetal\\Led", "Device", led_device_methods);
     led_device_ce = zend_register_internal_class(&ce);
+    led_device_ce->ce_flags |= ZEND_ACC_EXPLICIT_ABSTRACT_CLASS;   /* only the driver classes are built */
     led_device_ce->create_object = led_object_create;
     if (led_cap_ce) {
         zend_class_implements(led_device_ce, 1, led_cap_ce);
@@ -268,6 +336,7 @@ void led_device_class_register(void)
     memcpy(&led_handlers, zend_get_std_object_handlers(), sizeof(zend_object_handlers));
     led_handlers.offset = XtOffsetOf(led_object, std);
     led_handlers.free_obj = led_object_free;
+    led_handlers.clone_obj = NULL;   /* a copy would not own the strip: clone throws */
 }
 
 void led_driver_classes_register(void)
@@ -277,11 +346,11 @@ void led_driver_classes_register(void)
         if (!desc || !desc->php_class) {
             continue;
         }
-        char fqn[96];
-        int n = snprintf(fqn, sizeof(fqn), "Baremetal\\Led\\Driver\\%s", desc->php_class);
+        zend_string *fqn = zend_strpprintf(0, "Baremetal\\Led\\Driver\\%s", desc->php_class);
         zend_class_entry ce;
-        INIT_CLASS_ENTRY_EX(ce, fqn, n, desc->methods);
+        INIT_CLASS_ENTRY_EX(ce, ZSTR_VAL(fqn), ZSTR_LEN(fqn), desc->methods);
         zend_class_entry *dce = zend_register_internal_class_ex(&ce, led_device_ce);
+        zend_string_release(fqn);
         dce->create_object = led_object_create;
 
         zend_declare_class_constant_long(dce, "GRB", sizeof("GRB") - 1, LED_ORDER_GRB);
@@ -321,10 +390,11 @@ void led_ctor(INTERNAL_FUNCTION_PARAMETERS, const led_driver_desc_t *desc)
     }
 
     led_object *o = led_object_from(Z_OBJ_P(ZEND_THIS));
-    if (o->strip) {
-        bm_ledstrip_del(o->strip);   /* a second __construct replaces the strip */
-        o->strip = NULL;
-        o->count = 0;
+    led_strip_forget(o);   /* a second __construct replaces the strip */
+    if (led_strip_on((int) pin)) {
+        zend_throw_exception_ex(zend_ce_exception, 0,
+            "cannot init %s: GPIO %d is already used by another LED strip", desc->name, (int) pin);
+        return;
     }
     o->strip = bm_ledstrip_new((int) pin, (uint32_t) count, desc->model, (int) order);
     if (!o->strip) {
@@ -332,7 +402,20 @@ void led_ctor(INTERNAL_FUNCTION_PARAMETERS, const led_driver_desc_t *desc)
             "cannot init %s on GPIO %d", desc->name, (int) pin);
         return;
     }
+    o->pin = (int) pin;
     o->count = (uint32_t) count;
-    o->channels = desc->channels;
-    bm_ledstrip_clear(o->strip);
+    /* The order, not the driver, says how many bytes a pixel takes: an SK6812 can be wired as RGB. */
+    o->channels = order == LED_ORDER_GRBW || order == LED_ORDER_RGBW ? 4 : 3;
+    if (!led_strip_remember(o)) {
+        led_strip_forget(o);
+        zend_throw_exception_ex(zend_ce_exception, 0,
+            "cannot init %s on GPIO %d: %d LED strips are already open", desc->name, (int) pin, LED_MAX_STRIPS);
+        return;
+    }
+    /* Start dark, except while serving an HTTP request: in web-server every request builds its strips
+     * again, and the LEDs keep what the last request showed. */
+    if (SG(request_info).request_method == NULL && !led_flush(o, true)) {
+        led_strip_forget(o);
+        return;
+    }
 }

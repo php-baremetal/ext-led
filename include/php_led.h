@@ -29,7 +29,8 @@ extern zend_class_entry *led_device_ce;
 typedef struct {
     bm_ledstrip_t     *strip;    /* the strip handle, freed with the object */
     uint32_t           count;    /* number of pixels */
-    int                channels; /* 3 (RGB) | 4 (RGBW) */
+    int                channels; /* bytes per pixel on the wire: 3 (GRB, RGB) | 4 (GRBW, RGBW) */
+    int                pin;      /* GPIO of the strip, -1 while there is none */
     zend_object        std;
 } led_object;
 
