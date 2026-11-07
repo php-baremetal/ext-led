@@ -10,13 +10,20 @@ next: { label: 'The led_drivers registry', href: '../drivers/registry.md' }
 
 # Errors and limits
 
-ext-led throws `\ValueError` for invalid arguments and plain `\Exception` when a strip cannot be created; it
-defines no exception classes of its own.
+ext-led throws `\ValueError` for invalid arguments, plain `\Exception` when a strip cannot be created, and
+`\RuntimeException` for a board block `onboard()` cannot use; it defines no exception classes of its own.
 
 ## Exceptions
 
 | Message | Thrown by | Cause |
 | --- | --- | --- |
+| `board '<id>' has no '<block>' block` | `onboard()` | The board does not describe that block. |
+| `board '<id>' has a <block> of type '<type>', not '<chip>'` | `onboard()` | The block describes another chip. |
+| `board '<id>': <block>.pin is missing` | `onboard()` | The block has no pin. |
+| `board '<id>': <block>.order must be grb, rgb, grbw or rgbw` | `onboard()` | The block's `order` is another word. |
+| `board '<id>': <block>.pin must be a valid GPIO` | `onboard()` | The block's pin is negative. |
+| `board '<id>': <block>.order '<order>' is not supported by <chip>` | `onboard()` | The order is `grbw` or `rgbw` on a three-channel chip (`ws2812`). |
+| `Cannot instantiate abstract class Baremetal\Led\Device` | `Device::onboard()` | Called on the abstract base: call it on a chip class. |
 | `...: Argument #1 ($pin) must be a valid GPIO` | constructor | `$pin` is negative. |
 | `...: Argument #2 ($count) must be at least 1` | constructor | `$count` is 0 or negative. |
 | `...: Argument #3 ($order) must be one of the GRB, RGB constants` | `Ws2812` constructor | `$order` is not `GRB` or `RGB`. |

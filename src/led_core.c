@@ -19,6 +19,8 @@
 #include "php_led.h"
 #include "SAPI.h"
 #include "zend_exceptions.h"
+#include "ext/spl/spl_exceptions.h"
+#include "bm_board.h"
 
 #define LED_MAX_STRIPS 16
 
@@ -304,7 +306,15 @@ PHP_METHOD(LedDevice, count)
     RETURN_LONG((zend_long) o->count);
 }
 
+ZEND_BEGIN_ARG_WITH_RETURN_TYPE_INFO_EX(arginfo_led_onboard, 0, 0, IS_STATIC, 0)
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, block, IS_STRING, 0, "'led'")
+    ZEND_ARG_TYPE_INFO_WITH_DEFAULT_VALUE(0, count, IS_LONG, 0, "1")
+ZEND_END_ARG_INFO()
+
+PHP_METHOD(LedDevice, onboard);   /* defined after led_construct() */
+
 static const zend_function_entry led_device_methods[] = {
+    PHP_ME(LedDevice, onboard, arginfo_led_onboard, ZEND_ACC_PUBLIC | ZEND_ACC_STATIC)
     PHP_ME(LedDevice, pixel, arginfo_led_pixel, ZEND_ACC_PUBLIC)
     PHP_ME(LedDevice, fill,  arginfo_led_fill,  ZEND_ACC_PUBLIC)
     PHP_ME(LedDevice, hsv,   arginfo_led_hsv,   ZEND_ACC_PUBLIC)
@@ -362,17 +372,10 @@ void led_driver_classes_register(void)
     }
 }
 
-void led_ctor(INTERNAL_FUNCTION_PARAMETERS, const led_driver_desc_t *desc)
+/* The one way to build a strip: the constructors and onboard() both end here. Throws on failure. */
+static void led_construct(zend_object *obj, const led_driver_desc_t *desc, zend_long pin, zend_long count,
+                          bool order_is_null, zend_long order)
 {
-    zend_long pin, count = 1, order = 0;
-    zend_bool order_is_null = 1;
-    ZEND_PARSE_PARAMETERS_START(1, 3)
-        Z_PARAM_LONG(pin)
-        Z_PARAM_OPTIONAL
-        Z_PARAM_LONG(count)
-        Z_PARAM_LONG_OR_NULL(order, order_is_null)
-    ZEND_PARSE_PARAMETERS_END();
-
     if (pin < 0) {
         zend_argument_value_error(1, "must be a valid GPIO");
         return;
@@ -384,12 +387,13 @@ void led_ctor(INTERNAL_FUNCTION_PARAMETERS, const led_driver_desc_t *desc)
     if (order_is_null) {
         order = desc->default_order;
     } else if (order < LED_ORDER_GRB || order > (desc->channels == 4 ? LED_ORDER_RGBW : LED_ORDER_RGB)) {
-        zend_argument_value_error(3, desc->channels == 4 ? "must be one of the GRB, RGB, GRBW, RGBW constants"
-                                                         : "must be one of the GRB, RGB constants");
+        const char *msg = desc->channels == 4 ? "must be one of the GRB, RGB, GRBW, RGBW constants"
+                                              : "must be one of the GRB, RGB constants";
+        zend_argument_value_error(3, "%s", msg);
         return;
     }
 
-    led_object *o = led_object_from(Z_OBJ_P(ZEND_THIS));
+    led_object *o = led_object_from(obj);
     led_strip_forget(o);   /* a second __construct replaces the strip */
     if (led_strip_on((int) pin)) {
         zend_throw_exception_ex(zend_ce_exception, 0,
@@ -417,5 +421,104 @@ void led_ctor(INTERNAL_FUNCTION_PARAMETERS, const led_driver_desc_t *desc)
     if (SG(request_info).request_method == NULL && !led_flush(o, true)) {
         led_strip_forget(o);
         return;
+    }
+}
+
+void led_ctor(INTERNAL_FUNCTION_PARAMETERS, const led_driver_desc_t *desc)
+{
+    zend_long pin, count = 1, order = 0;
+    zend_bool order_is_null = 1;
+    ZEND_PARSE_PARAMETERS_START(1, 3)
+        Z_PARAM_LONG(pin)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_LONG(count)
+        Z_PARAM_LONG_OR_NULL(order, order_is_null)
+    ZEND_PARSE_PARAMETERS_END();
+
+    led_construct(Z_OBJ_P(ZEND_THIS), desc, pin, count, order_is_null, order);
+}
+
+static const led_driver_desc_t *led_desc_of(const zend_class_entry *ce)
+{
+    static const char prefix[] = "Baremetal\\Led\\Driver\\";
+    const size_t plen = sizeof(prefix) - 1;
+    for (; ce; ce = ce->parent) {
+        for (size_t i = 0; i < led_drivers_count; i++) {
+            const led_driver_desc_t *d = led_drivers[i];
+            if (d && d->php_class && ZSTR_LEN(ce->name) == plen + strlen(d->php_class)
+                && strncasecmp(ZSTR_VAL(ce->name), prefix, plen) == 0
+                && strcasecmp(ZSTR_VAL(ce->name) + plen, d->php_class) == 0) {
+                return d;
+            }
+        }
+    }
+    return NULL;
+}
+
+PHP_METHOD(LedDevice, onboard)
+{
+    char *block = "led";
+    size_t block_len = sizeof("led") - 1;
+    zend_long count = 1;
+    ZEND_PARSE_PARAMETERS_START(0, 2)
+        Z_PARAM_OPTIONAL
+        Z_PARAM_STRING(block, block_len)
+        Z_PARAM_LONG(count)
+    ZEND_PARSE_PARAMETERS_END();
+
+    zend_class_entry *ce = zend_get_called_scope(execute_data);
+    const led_driver_desc_t *desc = ce && !(ce->ce_flags & ZEND_ACC_EXPLICIT_ABSTRACT_CLASS)
+                                        ? led_desc_of(ce) : NULL;
+    if (!desc) {
+        zend_throw_error(NULL, "Cannot instantiate abstract class %s", ce ? ZSTR_VAL(ce->name) : "Baremetal\\Led\\Device");
+        RETURN_THROWS();
+    }
+
+    const char *id = bm_board_id();
+    const char *type = bm_board_type(block);
+    if (!type) {
+        zend_throw_exception_ex(spl_ce_RuntimeException, 0, "board '%s' has no '%s' block", id, block);
+        RETURN_THROWS();
+    }
+    if (strcmp(type, desc->name) != 0) {
+        zend_throw_exception_ex(spl_ce_RuntimeException, 0, "board '%s' has a %s of type '%s', not '%s'",
+            id, block, type, desc->name);
+        RETURN_THROWS();
+    }
+    int pin;
+    if (!bm_board_int(block, "pin", &pin)) {
+        zend_throw_exception_ex(spl_ce_RuntimeException, 0, "board '%s': %s.pin is missing", id, block);
+        RETURN_THROWS();
+    }
+    if (pin < 0) {
+        zend_throw_exception_ex(spl_ce_RuntimeException, 0, "board '%s': %s.pin must be a valid GPIO", id, block);
+        RETURN_THROWS();
+    }
+    const char *name = bm_board_str(block, "order");
+    bool order_is_null = name == NULL;
+    zend_long order = 0;
+    if (name) {
+        if (strcmp(name, "grb") == 0)       order = LED_ORDER_GRB;
+        else if (strcmp(name, "rgb") == 0)  order = LED_ORDER_RGB;
+        else if (strcmp(name, "grbw") == 0) order = LED_ORDER_GRBW;
+        else if (strcmp(name, "rgbw") == 0) order = LED_ORDER_RGBW;
+        else {
+            zend_throw_exception_ex(spl_ce_RuntimeException, 0,
+                "board '%s': %s.order must be grb, rgb, grbw or rgbw", id, block);
+            RETURN_THROWS();
+        }
+    }
+
+    if (!order_is_null && order > (desc->channels == 4 ? LED_ORDER_RGBW : LED_ORDER_RGB)) {
+        zend_throw_exception_ex(spl_ce_RuntimeException, 0, "board '%s': %s.order '%s' is not supported by %s",
+            id, block, name, desc->name);
+        RETURN_THROWS();
+    }
+
+    object_init_ex(return_value, ce);
+    led_construct(Z_OBJ_P(return_value), desc, pin, count, order_is_null, order);
+    if (EG(exception)) {
+        zval_ptr_dtor(return_value);
+        RETURN_THROWS();
     }
 }

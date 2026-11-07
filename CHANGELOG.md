@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.1.0
+
+- Added: Device::onboard() on every LED driver (Ws2812::onboard(), Sk6812::onboard()), from the board's led block.
+
 ## 1.0.2
 
 - Fixed: an `Sk6812` constructed with `GRB` or `RGB` stayed dark, because its pixels were written as RGBW on a

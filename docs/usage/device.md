@@ -47,6 +47,34 @@ released. A strip object cannot be cloned.
 
 `Baremetal\Led\Device` is abstract: always construct a chip class.
 
+## onboard()
+
+<!-- @method name="Ws2812::onboard(string $block = 'led', int $count = 1): static" returns="static" visibility="public" static -->
+
+<!-- @method name="Sk6812::onboard(string $block = 'led', int $count = 1): static" returns="static" visibility="public" static -->
+
+Builds the strip the board describes in its `led` block: the same as `new Ws2812($pin, $count, $order)` with
+`$pin` and `$order` read from the block. It is declared on `Device` and returns the class it is called on, so
+`Ws2812::onboard()` gives a `Ws2812` and `Sk6812::onboard()` an `Sk6812`. The block's `type` must be that
+chip (`ws2812`, `sk6812`); its `order` (`grb`, `rgb`, `grbw`, `rgbw`) becomes the matching colour constant,
+and the chip's default is used when the block has none. `$block` names another block of the same kind.
+
+```php
+$led = Ws2812::onboard();
+$led->fill(0, 32, 0);
+$led->show();
+```
+
+Throws `\RuntimeException` `board '<id>' has no '<block>' block`,
+`board '<id>' has a <block> of type '<type>', not '<chip>'`, `board '<id>': <block>.pin is missing` and
+`board '<id>': <block>.pin must be a valid GPIO`, `board '<id>': <block>.order must be grb, rgb, grbw or rgbw`
+and `board '<id>': <block>.order '<order>' is not supported by <chip>` (a four-channel order on a three-channel
+chip). `$count` below 1 throws `\ValueError` as in the constructor, and the rest throws what the constructor throws.
+`Device::onboard()` on the abstract class throws `Error`.
+
+`onboard()` builds the object itself: a PHP subclass of a chip class that defines its own constructor does not
+have it called.
+
 ## Colour order constants
 
 | Constant | Value | Wire order | On |
