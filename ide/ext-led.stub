@@ -1,0 +1,127 @@
+<?php
+// php-baremetal/ext-led 1.1.0 — IDE helper, not loaded at runtime.
+
+namespace Baremetal\Output {
+    /**
+     * Capability marker implemented by Baremetal\Led\Device, so by every LED chip class. No methods.
+     */
+    interface Led
+    {
+    }
+}
+
+namespace Baremetal\Led {
+    /**
+     * The abstract base of every addressable-LED chip class (Baremetal\Led\Driver\Ws2812, Sk6812, ...): a strip
+     * of pixels on one data pin, with a pixel buffer in memory.
+     *
+     * Each chip class is built with new Chip(int $pin, int $count = 1, ?int $order = null) and declares the
+     * colour-order constants GRB (0), RGB (1) and, on four-channel chips, GRBW (2), RGBW (3). The strip belongs
+     * to the object: destroying the object releases it but leaves the LEDs on their last frame (call off()
+     * first). pixel(), fill() and hsv() only write the buffer; show(), set() and off() send it. Colour components
+     * are clamped to 0 to 255 and never throw; on four-channel chips the white channel is always 0. Any method
+     * but count() of an object without a strip (a subclass whose constructor did not run) throws \Exception
+     * "Led\Device is not initialised"; new on this class throws \Error, and clone throws \Error.
+     */
+    abstract class Device implements \Baremetal\Output\Led
+    {
+        /**
+         * Builds the strip the board describes in its led block, as new Chip($pin, $count, $order) with $pin and
+         * $order read from the block; called on a chip class, it returns that class.
+         *
+         * The block's type must be that chip (ws2812, sk6812); its order (grb, rgb, grbw, rgbw) becomes the
+         * matching constant, or the chip's default when the block has none. A PHP subclass's own constructor is
+         * not called.
+         *
+         * @param string $block The board block to read; another block of the same kind.
+         * @param int $count Number of pixels, at least 1.
+         * @return static The new strip object of the class it is called on.
+         * @throws \RuntimeException "board '<id>' has no '<block>' block", "board '<id>' has a <block> of type
+         *                           '<type>', not '<chip>'", "board '<id>': <block>.pin is missing", "board '<id>':
+         *                           <block>.pin must be a valid GPIO", "board '<id>': <block>.order must be grb,
+         *                           rgb, grbw or rgbw", or "board '<id>': <block>.order '<order>' is not supported
+         *                           by <chip>" (a four-channel order on a three-channel chip).
+         * @throws \ValueError When $count is below 1.
+         * @throws \Exception What the chip constructor throws: "cannot init NAME on GPIO N", "cannot init NAME:
+         *                    GPIO N is already used by another LED strip", "cannot init NAME on GPIO N: 16 LED
+         *                    strips are already open", or "LED refresh failed on GPIO N (error E)".
+         * @throws \Error "Cannot instantiate abstract class Baremetal\Led\Device" when called on this class.
+         */
+        public static function onboard(string $block = 'led', int $count = 1): static {}
+
+        /**
+         * Sets one pixel of the buffer to an RGB colour; nothing reaches the LEDs until show().
+         *
+         * @param int $i Pixel index, 0-based, 0 to count() - 1.
+         * @param int $r Red, 0 to 255 (clamped).
+         * @param int $g Green, 0 to 255 (clamped).
+         * @param int $b Blue, 0 to 255 (clamped).
+         * @return void
+         * @throws \ValueError "...: Argument #1 ($i) is out of range for this strip" when $i is negative or not
+         *                     below count().
+         * @throws \Exception "LED write failed on GPIO N (error E)" when the platform refused the pixel.
+         */
+        public function pixel(int $i, int $r, int $g, int $b): void {}
+
+        /**
+         * Sets every pixel of the buffer to one RGB colour; nothing reaches the LEDs until show().
+         *
+         * @param int $r Red, 0 to 255 (clamped).
+         * @param int $g Green, 0 to 255 (clamped).
+         * @param int $b Blue, 0 to 255 (clamped).
+         * @return void
+         * @throws \Exception "LED write failed on GPIO N (error E)" when the platform refused a pixel.
+         */
+        public function fill(int $r, int $g, int $b): void {}
+
+        /**
+         * Sets one pixel of the buffer from hue, saturation and value; nothing reaches the LEDs until show().
+         *
+         * @param int $i Pixel index, 0-based, 0 to count() - 1.
+         * @param int $h Hue in degrees, any integer, taken modulo 360.
+         * @param int $s Saturation, 0 to 255 (clamped).
+         * @param int $v Value (brightness), 0 to 255 (clamped).
+         * @return void
+         * @throws \ValueError "...: Argument #1 ($i) is out of range for this strip" when $i is negative or not
+         *                     below count().
+         * @throws \Exception "LED write failed on GPIO N (error E)" when the platform refused the pixel.
+         */
+        public function hsv(int $i, int $h, int $s, int $v): void {}
+
+        /**
+         * fill() and show() in one call: the whole strip one colour, at once.
+         *
+         * @param int $r Red, 0 to 255 (clamped).
+         * @param int $g Green, 0 to 255 (clamped).
+         * @param int $b Blue, 0 to 255 (clamped).
+         * @return void
+         * @throws \Exception "LED write failed on GPIO N (error E)" when the platform refused a pixel, or "LED
+         *                    refresh failed on GPIO N (error E)" when the frame could not be sent.
+         */
+        public function set(int $r, int $g, int $b): void {}
+
+        /**
+         * Sends the buffer to the LEDs; blocks until the frame is out.
+         *
+         * @return void
+         * @throws \Exception "LED refresh failed on GPIO N (error E)" when the frame could not be sent (the
+         *                    transmit channel is busy or failed).
+         */
+        public function show(): void {}
+
+        /**
+         * Sets every pixel to off, in the buffer too, and sends the frame.
+         *
+         * @return void
+         * @throws \Exception "LED refresh failed on GPIO N (error E)" when the frame could not be sent.
+         */
+        public function off(): void {}
+
+        /**
+         * The number of pixels given to the constructor.
+         *
+         * @return int The pixel count.
+         */
+        public function count(): int {}
+    }
+}

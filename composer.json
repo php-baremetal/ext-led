@@ -23,7 +23,8 @@
                     "type": "led_driver_desc_t",
                     "header": "led_driver_desc.h"
                 }
-            }
+            },
+            "ide-stubs": ["ide/ext-led.stub"]
         }
     }
 }

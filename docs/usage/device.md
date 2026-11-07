@@ -125,8 +125,7 @@ Sets every pixel to off, in the buffer too, and sends the frame.
 
 The number of pixels given to the constructor.
 
-On `Sk6812` the white channel is always written as 0: the methods set R, G and B only. None of the output
-methods reports a transfer error.
+On `Sk6812` the white channel is always written as 0: the methods set R, G and B only.
 
 ## Example
 

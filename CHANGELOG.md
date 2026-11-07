@@ -2,6 +2,7 @@
 
 ## 1.1.0
 
+- Added: ide/ext-led.stub, the PHP declarations of the package for IDEs (conductor copies it into vendor/php-baremetal/ide-stubs/).
 - Added: Device::onboard() on every LED driver (Ws2812::onboard(), Sk6812::onboard()), from the board's led block.
 
 ## 1.0.2
